@@ -18,7 +18,7 @@ from api import prompt_to_image_result
 from exceptions import RequestError
 from logging_utils import preview_text
 from utils import image_path_to_markdown
-from config import DEFAULT_REASONING
+from config import DEFAULT_REASONING, GENERATE_IMAGE_PROMPT_PREFIX
 
 
 router = APIRouter()
