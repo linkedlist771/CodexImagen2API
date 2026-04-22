@@ -203,8 +203,9 @@ base_url = "https://api.openai.com/v1"
 
 模型映射规则：
 
-- 请求里的 `gpt-4o-image`、`gpt-image-1`、`gpt-image-2` 会被映射为配置中的后端模型
-- 其他模型名会原样透传给上游
+- 请求里的 `model` 字段不会参与上游模型选择
+- 服务始终使用 `~/.codex/config.toml` 里的 `model`，未配置时默认使用 `gpt-5.4`
+- 响应里的 `model` 会原样回显请求值，用于兼容 OpenAI 风格客户端
 
 ## 目录说明
 

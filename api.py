@@ -203,11 +203,8 @@ async def send_request(
     raise RequestError("request retry loop exhausted")
 
 
-def resolve_backend_model(requested_model: str | None) -> str:
-    config_model = read_config_value(CONFIG_PATH, "model") or DEFAULT_MODEL
-    if requested_model in {None, "", "gpt-4o-image", "gpt-image-1", "gpt-image-2"}:
-        return config_model
-    return requested_model
+def resolve_backend_model() -> str:
+    return read_config_value(CONFIG_PATH, "model") or DEFAULT_MODEL
 
 
 async def prompt_to_image_result(
@@ -219,7 +216,7 @@ async def prompt_to_image_result(
     base_url = read_config_value(CONFIG_PATH, "base_url") or default_base_url(
         auth.get("auth_mode")
     )
-    backend_model = resolve_backend_model(requested_model)
+    backend_model = resolve_backend_model()
     installation_id = str(uuid4())
     window_id = str(uuid4())
     conversation_id = str(uuid4())
