@@ -98,7 +98,7 @@ def build_request_payload(
             }
         ],
         "tools": [{"type": "image_generation", "output_format": "png"}],
-        "tool_choice": "force",
+        "tool_choice": "required",
         "parallel_tool_calls": False,
         "reasoning": DEFAULT_REASONING,
         "store": False,
