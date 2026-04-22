@@ -10,6 +10,9 @@ AUTHEN_DIR = ROOT / "authens"
 AUTHEN_DIR.mkdir(exist_ok=True, parents=True)
 AUTH_FILE = AUTHEN_DIR / "auth_state.json"
 
+LOG_DIR = ROOT / "logs"
+LOG_DIR.mkdir(exist_ok=True, parents=True)
+
 IMAGE_SAVE_DIR = ROOT / "images"
 IMAGE_SAVE_DIR.mkdir(exist_ok=True, parents=True)
 
@@ -40,3 +43,5 @@ DEFAULT_EDIT_PROMPT = (
 
 HTTP_TIMEOUT = 300
 ORIGINATOR = "codex_cli_rs"
+
+GENERATE_IMAGE_PROMPT_PREFIX = "Generate an image with the following description:\n"

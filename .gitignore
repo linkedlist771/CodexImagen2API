@@ -214,5 +214,6 @@ authens/
 browser_data/
 images/
 example_outputs/
+logs/
 .omc/
 uv.lock

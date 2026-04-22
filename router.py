@@ -60,6 +60,9 @@ def extract_prompt_and_images(messages: list[ChatMessage]) -> tuple[str, list[st
                     images.append(url)
 
         prompt = "\n".join(texts).strip()
+
+
+        
         if prompt or images:
             return prompt, images
 

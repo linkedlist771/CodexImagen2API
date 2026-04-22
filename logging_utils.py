@@ -5,6 +5,8 @@ import sys
 
 from loguru import logger
 
+from config import LOG_DIR
+
 
 def configure_logger() -> None:
     level = os.getenv("CODEX_IMAGE_SERVER_LOG_LEVEL", "INFO").upper()
@@ -16,11 +18,16 @@ def configure_logger() -> None:
         enqueue=True,
         backtrace=False,
         diagnose=False,
-        format=(
-            "{time:YYYY-MM-DD HH:mm:ss.SSS} | "
-            "{level:<8} | "
-            "{message}"
-        ),
+    )
+    logger.add(
+        LOG_DIR / "server.log",
+        level=level,
+        enqueue=True,
+        backtrace=False,
+        diagnose=False,
+        rotation="10 MB",
+        retention="14 days",
+        encoding="utf-8",
     )
 
 
