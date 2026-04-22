@@ -97,7 +97,7 @@ def build_request_payload(
                 "content": content,
             }
         ],
-        "tools": [{"type": "image_generation", "output_format": "png"}],
+        "tools": [{"type": "image_generation", "output_format": "png", "quality": "high", "background": "auto"}],
         "tool_choice": "required",
         "parallel_tool_calls": False,
         "reasoning": DEFAULT_REASONING,
