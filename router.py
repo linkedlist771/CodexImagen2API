@@ -18,6 +18,7 @@ from api import prompt_to_image_result
 from exceptions import RequestError
 from logging_utils import preview_text
 from utils import image_path_to_markdown
+from config import DEFAULT_REASONING
 
 
 router = APIRouter()
@@ -62,7 +63,7 @@ def extract_prompt_and_images(messages: list[ChatMessage]) -> tuple[str, list[st
         prompt = "\n".join(texts).strip()
 
 
-        
+
         if prompt or images:
             return prompt, images
 
@@ -86,6 +87,7 @@ async def chat_completions(payload: ChatCompletionRequest, request: Request):
 
     try:
         prompt, images = extract_prompt_and_images(payload.messages)
+        prompt = GENERATE_IMAGE_PROMPT_PREFIX + prompt
     except HTTPException as error:
         logger.warning(
             "chat_completions rejected request_id={} client={} model={} detail={!r}",
