@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from loguru import logger
 
 from config import AUTH_FILE
 from config import CLIENT_ID
@@ -49,6 +50,7 @@ async def ensure_auth_file() -> Path:
         raise FileNotFoundError(f"auth file not found: {HOME_AUTH_PATH}")
 
     await asyncio.to_thread(shutil.copy2, HOME_AUTH_PATH, AUTH_FILE)
+    logger.debug("copied auth file from {} to {}", HOME_AUTH_PATH, AUTH_FILE)
     return AUTH_FILE
 
 
@@ -85,12 +87,19 @@ async def save_auth(auth: dict[str, Any]) -> None:
 async def refresh_access_token(
     client: httpx.AsyncClient,
     auth: dict[str, Any],
+    request_id: str | None = None,
 ) -> None:
     refresh_token = auth.get("refresh_token")
     if not refresh_token:
         raise RequestError(
             "received 401 but no refresh token is available in authens/auth_state.json"
         )
+
+    logger.warning(
+        "refreshing access token request_id={} auth_path={}",
+        request_id or "-",
+        auth["auth_path"],
+    )
 
     response = await client.post(
         REFRESH_TOKEN_URL,
@@ -133,3 +142,10 @@ async def refresh_access_token(
         )
 
     await save_auth(auth)
+    logger.debug(
+        "access token refreshed request_id={} auth_path={} has_refresh_token={} has_account_id={}",
+        request_id or "-",
+        auth["auth_path"],
+        bool(auth.get("refresh_token")),
+        bool(auth.get("account_id")),
+    )

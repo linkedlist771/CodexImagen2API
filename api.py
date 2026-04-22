@@ -6,6 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
+from loguru import logger
 
 from auth import load_auth
 from auth import refresh_access_token
@@ -173,13 +174,27 @@ async def send_request(
     url: str,
     headers: dict[str, str],
     payload: dict[str, Any],
+    request_id: str | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     for attempt in range(2):
+        logger.debug(
+            "responses request attempt={} url={} model={} request_id={}",
+            attempt + 1,
+            url,
+            payload["model"],
+            request_id or "-",
+        )
+
         async with client.stream(
             "POST", url, headers=headers, json=payload
         ) as response:
             if response.status_code == 401 and attempt == 0:
-                await refresh_access_token(client, auth)
+                logger.warning(
+                    "responses request unauthorized request_id={} attempt={} action=refresh_access_token",
+                    request_id or "-",
+                    attempt + 1,
+                )
+                await refresh_access_token(client, auth, request_id=request_id)
                 headers["Authorization"] = f"Bearer {auth['access_token']}"
                 if auth.get("account_id"):
                     headers["ChatGPT-Account-ID"] = auth["account_id"]
@@ -187,6 +202,12 @@ async def send_request(
 
             if response.status_code >= 400:
                 body = (await response.aread()).decode("utf-8", "replace")
+                logger.error(
+                    "responses request failed status={} request_id={} body={}",
+                    response.status_code,
+                    request_id or "-",
+                    body[:1000],
+                )
                 raise RequestError(
                     f"responses request failed with HTTP {response.status_code}: {body[:1000]}"
                 )
@@ -197,6 +218,14 @@ async def send_request(
                     "stream finished without an image_generation_call item; "
                     f"assistant text was: {' '.join(assistant_text).strip()!r}"
                 )
+
+            logger.debug(
+                "responses stream complete request_id={} image_call_id={} output_status={} assistant_text_chars={}",
+                request_id or "-",
+                image_item.get("id"),
+                image_item.get("status"),
+                len("".join(assistant_text).strip()),
+            )
 
             return image_item, assistant_text
 
@@ -211,6 +240,7 @@ async def prompt_to_image_result(
     prompt: str,
     images: list[str],
     requested_model: str | None = None,
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     auth = await load_auth()
     base_url = read_config_value(CONFIG_PATH, "base_url") or default_base_url(
@@ -227,6 +257,16 @@ async def prompt_to_image_result(
         content = image_edit_content(prompt, images)
     else:
         content = text_to_image_content(prompt)
+
+    logger.debug(
+        "prepare image request request_id={} model={} auth_mode={} base_url={} prompt_chars={} images={}",
+        request_id or conversation_id,
+        backend_model,
+        auth.get("auth_mode"),
+        base_url,
+        len(prompt),
+        len(images),
+    )
 
     payload = build_request_payload(
         backend_model,
@@ -245,10 +285,21 @@ async def prompt_to_image_result(
             url,
             headers,
             payload,
+            request_id=request_id or conversation_id,
         )
 
     image_bytes = base64.b64decode(image_item["result"])
     image_path = await save_generated_image(image_bytes)
+
+    logger.debug(
+        "image saved request_id={} image_call_id={} bytes={} path={} revised_prompt_chars={} assistant_text_chars={}",
+        request_id or conversation_id,
+        image_item.get("id"),
+        len(image_bytes),
+        image_path,
+        len(image_item.get("revised_prompt") or ""),
+        len("".join(assistant_text).strip()),
+    )
 
     return {
         "image_path": image_path,

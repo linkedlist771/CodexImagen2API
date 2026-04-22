@@ -55,6 +55,12 @@ uv run python server.py
 uv run python server.py --host 0.0.0.0 --port 8000 --workers 1
 ```
 
+如果想调高日志详细程度，可以临时设置：
+
+```bash
+CODEX_IMAGE_SERVER_LOG_LEVEL=DEBUG uv run python server.py --port 4000
+```
+
 默认监听地址：
 
 - `host`: `0.0.0.0`
