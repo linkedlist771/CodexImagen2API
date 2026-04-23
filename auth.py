@@ -4,18 +4,24 @@ import asyncio
 import base64
 import json
 import shutil
+import threading
 from pathlib import Path
 from typing import Any
 
 import httpx
 from loguru import logger
 
-from config import AUTH_FILE
+from config import AUTHEN_DIR
+from config import AUTH_FILE_PATTERN
 from config import CLIENT_ID
+from config import DEFAULT_AUTH_FILE
 from config import HOME_AUTH_PATH
 from config import ORIGINATOR
 from config import REFRESH_TOKEN_URL
 from exceptions import RequestError
+
+_auth_file_index = 0
+_auth_file_lock = threading.Lock()
 
 
 def jwt_claim(jwt_value: str | None, claim_name: str) -> Any:
@@ -42,22 +48,47 @@ def jwt_claim(jwt_value: str | None, claim_name: str) -> Any:
     return body.get(claim_name)
 
 
-async def ensure_auth_file() -> Path:
-    if AUTH_FILE.exists():
-        return AUTH_FILE
+def discover_auth_files() -> list[Path]:
+    return sorted(path for path in AUTHEN_DIR.glob(AUTH_FILE_PATTERN) if path.is_file())
+
+
+async def ensure_auth_files() -> list[Path]:
+    auth_files = discover_auth_files()
+    if auth_files:
+        return auth_files
 
     if not HOME_AUTH_PATH.exists():
-        raise FileNotFoundError(f"auth file not found: {HOME_AUTH_PATH}")
+        raise FileNotFoundError(
+            f"no auth JSON files found in {AUTHEN_DIR} and auth file not found: {HOME_AUTH_PATH}"
+        )
 
-    await asyncio.to_thread(shutil.copy2, HOME_AUTH_PATH, AUTH_FILE)
-    logger.debug("copied auth file from {} to {}", HOME_AUTH_PATH, AUTH_FILE)
-    return AUTH_FILE
+    await asyncio.to_thread(shutil.copy2, HOME_AUTH_PATH, DEFAULT_AUTH_FILE)
+    logger.debug("copied auth file from {} to {}", HOME_AUTH_PATH, DEFAULT_AUTH_FILE)
+    return discover_auth_files()
+
+
+async def next_auth_file() -> Path:
+    global _auth_file_index
+
+    auth_files = await ensure_auth_files()
+    if not auth_files:
+        raise FileNotFoundError(f"no auth JSON files found in {AUTHEN_DIR}")
+
+    with _auth_file_lock:
+        auth_path = auth_files[_auth_file_index % len(auth_files)]
+        _auth_file_index += 1
+
+    return auth_path
 
 
 async def load_auth() -> dict[str, Any]:
-    auth_path = await ensure_auth_file()
+    auth_path = await next_auth_file()
     raw_text = await asyncio.to_thread(auth_path.read_text)
-    raw_data = json.loads(raw_text)
+    try:
+        raw_data = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        raise RequestError(f"{auth_path} contains invalid JSON: {exc}") from exc
+
     tokens = raw_data.get("tokens") or {}
     access_token = tokens.get("access_token")
 
@@ -92,7 +123,7 @@ async def refresh_access_token(
     refresh_token = auth.get("refresh_token")
     if not refresh_token:
         raise RequestError(
-            "received 401 but no refresh token is available in authens/auth_state.json"
+            f"received 401 but no refresh token is available in {auth['auth_path']}"
         )
 
     logger.warning(

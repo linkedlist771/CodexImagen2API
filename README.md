@@ -179,15 +179,16 @@ curl http://127.0.0.1:8000/v1/chat/completions \
 
 程序启动后不会主动登录，而是直接使用本机已有的 Codex 认证状态：
 
-- 首次使用时，如果 `authens/auth_state.json` 不存在，会从 `~/.codex/auth.json` 复制一份
-- 实际请求时使用其中的 `tokens.access_token`
+- 首次使用时，如果 `authens/*.json` 不存在，会从 `~/.codex/auth.json` 复制一份到 `authens/auth_state.json`
+- 实际请求时会通过 glob 发现 `authens/` 下所有 `.json` 文件，并按 round-robin 方式选择认证文件
+- 每次图片请求最多会轮转重试 `3` 次认证文件
 - 如果上游返回 `401`，会尝试用 `refresh_token` 刷新 access token
-- 刷新后的 token 会回写到 `authens/auth_state.json`
+- 刷新后的 token 会回写到当前使用的认证文件
 
 这意味着：
 
 - `~/.codex/auth.json` 需要先存在
-- `authens/auth_state.json` 是这个项目自己的本地认证副本
+- `authens/*.json` 是这个项目自己的本地认证副本集合
 
 ## 配置
 

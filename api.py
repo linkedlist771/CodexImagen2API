@@ -18,6 +18,7 @@ from config import DEFAULT_MODEL
 from config import DEFAULT_REASONING
 from config import HTTP_TIMEOUT
 from config import ORIGINATOR
+from config import REQUEST_AUTH_RETRY_COUNT
 from exceptions import RequestError
 from utils import read_config_value
 from utils import save_generated_image
@@ -242,31 +243,15 @@ async def prompt_to_image_result(
     requested_model: str | None = None,
     request_id: str | None = None,
 ) -> dict[str, Any]:
-    auth = await load_auth()
-    base_url = read_config_value(CONFIG_PATH, "base_url") or default_base_url(
-        auth.get("auth_mode")
-    )
     backend_model = resolve_backend_model()
     installation_id = str(uuid4())
     window_id = str(uuid4())
     conversation_id = str(uuid4())
-    url = responses_url(base_url)
-    headers = build_headers(auth, conversation_id, installation_id, window_id)
 
     if images:
         content = image_edit_content(prompt, images)
     else:
         content = text_to_image_content(prompt)
-
-    logger.debug(
-        "prepare image request request_id={} model={} auth_mode={} base_url={} prompt_chars={} images={}",
-        request_id or conversation_id,
-        backend_model,
-        auth.get("auth_mode"),
-        base_url,
-        len(prompt),
-        len(images),
-    )
 
     payload = build_request_payload(
         backend_model,
@@ -279,14 +264,56 @@ async def prompt_to_image_result(
         timeout=HTTP_TIMEOUT,
         follow_redirects=True,
     ) as client:
-        image_item, assistant_text = await send_request(
-            client,
-            auth,
-            url,
-            headers,
-            payload,
-            request_id=request_id or conversation_id,
-        )
+        for auth_attempt in range(REQUEST_AUTH_RETRY_COUNT):
+            try:
+                auth = await load_auth()
+                base_url = read_config_value(CONFIG_PATH, "base_url") or default_base_url(
+                    auth.get("auth_mode")
+                )
+                url = responses_url(base_url)
+                headers = build_headers(
+                    auth,
+                    conversation_id,
+                    installation_id,
+                    window_id,
+                )
+
+                logger.debug(
+                    "prepare image request request_id={} model={} auth_attempt={}/{} auth_path={} auth_mode={} base_url={} prompt_chars={} images={}",
+                    request_id or conversation_id,
+                    backend_model,
+                    auth_attempt + 1,
+                    REQUEST_AUTH_RETRY_COUNT,
+                    auth["auth_path"],
+                    auth.get("auth_mode"),
+                    base_url,
+                    len(prompt),
+                    len(images),
+                )
+
+                image_item, assistant_text = await send_request(
+                    client,
+                    auth,
+                    url,
+                    headers,
+                    payload,
+                    request_id=request_id or conversation_id,
+                )
+                break
+            except RequestError as exc:
+                logger.warning(
+                    "image request failed request_id={} auth_attempt={}/{} error={}",
+                    request_id or conversation_id,
+                    auth_attempt + 1,
+                    REQUEST_AUTH_RETRY_COUNT,
+                    exc,
+                )
+                if auth_attempt + 1 >= REQUEST_AUTH_RETRY_COUNT:
+                    raise RequestError(
+                        f"image request failed after {REQUEST_AUTH_RETRY_COUNT} auth attempts: {exc}"
+                    ) from exc
+        else:
+            raise RequestError("image request auth retry loop exhausted")
 
     image_bytes = base64.b64decode(image_item["result"])
     image_path = await save_generated_image(image_bytes)

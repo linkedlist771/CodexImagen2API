@@ -8,7 +8,9 @@ CONFIG_PATH = Path.home() / ".codex" / "config.toml"
 
 AUTHEN_DIR = ROOT / "authens"
 AUTHEN_DIR.mkdir(exist_ok=True, parents=True)
-AUTH_FILE = AUTHEN_DIR / "auth_state.json"
+AUTH_FILE_PATTERN = "*.json"
+DEFAULT_AUTH_FILE = AUTHEN_DIR / "auth_state.json"
+REQUEST_AUTH_RETRY_COUNT = 3
 
 LOG_DIR = ROOT / "logs"
 LOG_DIR.mkdir(exist_ok=True, parents=True)
