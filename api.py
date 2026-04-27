@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
+import re
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -15,10 +18,13 @@ from config import DEFAULT_API_BASE_URL
 from config import DEFAULT_CHATGPT_BASE_URL
 from config import DEFAULT_INSTRUCTIONS
 from config import DEFAULT_MODEL
+from config import DEFAULT_RATE_LIMIT_COOLDOWN_SECONDS
 from config import DEFAULT_REASONING
 from config import HTTP_TIMEOUT
 from config import ORIGINATOR
 from config import REQUEST_AUTH_RETRY_COUNT
+from cooldowns import set_auth_cooldown
+from exceptions import RateLimitError
 from exceptions import RequestError
 from utils import read_config_value
 from utils import save_generated_image
@@ -32,6 +38,61 @@ def default_base_url(auth_mode: str | None) -> str:
 
 def responses_url(base_url: str) -> str:
     return base_url.rstrip("/") + "/responses"
+
+
+def parse_rate_limit_retry_after(message: str) -> float | None:
+    match = re.search(r"Please try again in (\d+(?:\.\d+)?)\s*(ms|s|sec|second|seconds)\b", message)
+    if not match:
+        return None
+
+    value = float(match.group(1))
+    unit = match.group(2)
+    if unit == "ms":
+        return value / 1000
+    return value
+
+
+def rate_limit_error_from_payload(payload: dict[str, Any]) -> RateLimitError | None:
+    error = payload.get("error") or (payload.get("response") or {}).get("error") or {}
+    if error.get("code") != "rate_limit_exceeded":
+        return None
+
+    message = error.get("message") or json.dumps(payload, ensure_ascii=False)
+    return RateLimitError(message, parse_rate_limit_retry_after(message))
+
+
+def rate_limit_error_from_response(status_code: int, body: str) -> RateLimitError | None:
+    if status_code != 429 and "rate_limit_exceeded" not in body:
+        return None
+
+    message = body
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        payload = None
+
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            message = error.get("message") or body
+        elif payload.get("code") == "rate_limit_exceeded":
+            message = payload.get("message") or body
+        elif status_code != 429:
+            return None
+
+    return RateLimitError(message[:1000], parse_rate_limit_retry_after(message))
+
+
+async def mark_auth_rate_limited(
+    auth_path: Path,
+    cooldown_seconds: float,
+) -> float:
+    return await asyncio.to_thread(
+        set_auth_cooldown,
+        auth_path,
+        cooldown_seconds,
+        "rate_limit_exceeded",
+    )
 
 
 def build_headers(
@@ -118,6 +179,9 @@ def handle_sse_payload(
     assistant_text: list[str],
 ) -> dict[str, Any] | None:
     if payload.get("type") == "response.failed":
+        rate_limit_error = rate_limit_error_from_payload(payload)
+        if rate_limit_error:
+            raise rate_limit_error
         raise RequestError(json.dumps(payload, ensure_ascii=False))
 
     if payload.get("type") != "response.output_item.done":
@@ -209,6 +273,9 @@ async def send_request(
                     request_id or "-",
                     body[:1000],
                 )
+                rate_limit_error = rate_limit_error_from_response(response.status_code, body)
+                if rate_limit_error:
+                    raise rate_limit_error
                 raise RequestError(
                     f"responses request failed with HTTP {response.status_code}: {body[:1000]}"
                 )
@@ -265,6 +332,7 @@ async def prompt_to_image_result(
         follow_redirects=True,
     ) as client:
         for auth_attempt in range(REQUEST_AUTH_RETRY_COUNT):
+            auth: dict[str, Any] | None = None
             try:
                 auth = await load_auth()
                 base_url = read_config_value(CONFIG_PATH, "base_url") or default_base_url(
@@ -300,6 +368,27 @@ async def prompt_to_image_result(
                     request_id=request_id or conversation_id,
                 )
                 break
+            except RateLimitError as exc:
+                if auth is None:
+                    raise
+
+                cooldown_seconds = exc.retry_after_seconds or DEFAULT_RATE_LIMIT_COOLDOWN_SECONDS
+                auth_path = auth["auth_path"]
+                cooldown_until = await mark_auth_rate_limited(auth_path, cooldown_seconds)
+                logger.warning(
+                    "image request rate limited request_id={} auth_attempt={}/{} auth_path={} cooldown_seconds={:.3f} cooldown_until={} error={}",
+                    request_id or conversation_id,
+                    auth_attempt + 1,
+                    REQUEST_AUTH_RETRY_COUNT,
+                    auth_path,
+                    cooldown_seconds,
+                    cooldown_until,
+                    exc,
+                )
+                if auth_attempt + 1 >= REQUEST_AUTH_RETRY_COUNT:
+                    raise RequestError(
+                        f"image request failed after {REQUEST_AUTH_RETRY_COUNT} auth attempts: {exc}"
+                    ) from exc
             except RequestError as exc:
                 logger.warning(
                     "image request failed request_id={} auth_attempt={}/{} error={}",

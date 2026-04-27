@@ -11,6 +11,11 @@ AUTHEN_DIR.mkdir(exist_ok=True, parents=True)
 AUTH_FILE_PATTERN = "*.json"
 DEFAULT_AUTH_FILE = AUTHEN_DIR / "auth_state.json"
 REQUEST_AUTH_RETRY_COUNT = 3
+DEFAULT_RATE_LIMIT_COOLDOWN_SECONDS = 1.0
+
+DATA_DIR = ROOT / "data"
+DATA_DIR.mkdir(exist_ok=True, parents=True)
+AUTH_COOLDOWN_DB_PATH = DATA_DIR / "auth_cooldowns.sqlite3"
 
 LOG_DIR = ROOT / "logs"
 LOG_DIR.mkdir(exist_ok=True, parents=True)

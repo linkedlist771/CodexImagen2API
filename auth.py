@@ -5,6 +5,7 @@ import base64
 import json
 import shutil
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,8 @@ from config import DEFAULT_AUTH_FILE
 from config import HOME_AUTH_PATH
 from config import ORIGINATOR
 from config import REFRESH_TOKEN_URL
+from cooldowns import auth_cooldown_key
+from cooldowns import get_active_auth_cooldowns
 from exceptions import RequestError
 
 _auth_file_index = 0
@@ -74,11 +77,29 @@ async def next_auth_file() -> Path:
     if not auth_files:
         raise FileNotFoundError(f"no auth JSON files found in {AUTHEN_DIR}")
 
-    with _auth_file_lock:
-        auth_path = auth_files[_auth_file_index % len(auth_files)]
-        _auth_file_index += 1
+    now = time.time()
+    cooldowns = await asyncio.to_thread(get_active_auth_cooldowns, auth_files, now)
 
-    return auth_path
+    with _auth_file_lock:
+        for offset in range(len(auth_files)):
+            index = (_auth_file_index + offset) % len(auth_files)
+            auth_path = auth_files[index]
+            cooldown_until = cooldowns.get(auth_cooldown_key(auth_path))
+            if cooldown_until is None:
+                _auth_file_index = index + 1
+                return auth_path
+
+        auth_path = min(auth_files, key=lambda path: cooldowns[auth_cooldown_key(path)])
+        cooldown_remaining = max(cooldowns[auth_cooldown_key(auth_path)] - now, 0)
+
+    logger.warning(
+        "all auth files are cooling down next_auth_path={} cooldown_remaining_ms={:.2f}",
+        auth_path,
+        cooldown_remaining * 1000,
+    )
+    raise RequestError(
+        f"all auth files are cooling down; next account is available in {cooldown_remaining:.3f}s"
+    )
 
 
 async def load_auth() -> dict[str, Any]:
