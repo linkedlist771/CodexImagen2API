@@ -33,7 +33,7 @@ REFRESH_TOKEN_URL = "https://auth.openai.com/oauth/token"
 CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 
 DEFAULT_MODEL = "gpt-5.4"
-DEFAULT_REASONING = {"effort": "medium", "summary": "auto"}
+DEFAULT_REASONING = {"effort": "low", "summary": "auto"}
 DEFAULT_INSTRUCTIONS = (
     "When the user asks to generate or edit an image, call the image_generation tool. "
     "Do not answer with text only if image generation is possible."
