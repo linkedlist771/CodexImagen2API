@@ -70,6 +70,10 @@ async def ensure_auth_files() -> list[Path]:
     return discover_auth_files()
 
 
+async def auth_file_count() -> int:
+    return len(await ensure_auth_files())
+
+
 async def next_auth_file() -> Path:
     global _auth_file_index
 

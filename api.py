@@ -11,6 +11,7 @@ from uuid import uuid4
 import httpx
 from loguru import logger
 
+from auth import auth_file_count
 from auth import load_auth
 from auth import refresh_access_token
 from config import CONFIG_PATH
@@ -327,11 +328,13 @@ async def prompt_to_image_result(
         content,
     )
 
+    auth_attempt_limit = max(await auth_file_count(), REQUEST_AUTH_RETRY_COUNT)
+
     async with httpx.AsyncClient(
         timeout=HTTP_TIMEOUT,
         follow_redirects=True,
     ) as client:
-        for auth_attempt in range(REQUEST_AUTH_RETRY_COUNT):
+        for auth_attempt in range(auth_attempt_limit):
             auth: dict[str, Any] | None = None
             try:
                 auth = await load_auth()
@@ -351,7 +354,7 @@ async def prompt_to_image_result(
                     request_id or conversation_id,
                     backend_model,
                     auth_attempt + 1,
-                    REQUEST_AUTH_RETRY_COUNT,
+                    auth_attempt_limit,
                     auth["auth_path"],
                     auth.get("auth_mode"),
                     base_url,
@@ -379,27 +382,27 @@ async def prompt_to_image_result(
                     "image request rate limited request_id={} auth_attempt={}/{} auth_path={} cooldown_seconds={:.3f} cooldown_until={} error={}",
                     request_id or conversation_id,
                     auth_attempt + 1,
-                    REQUEST_AUTH_RETRY_COUNT,
+                    auth_attempt_limit,
                     auth_path,
                     cooldown_seconds,
                     cooldown_until,
                     exc,
                 )
-                if auth_attempt + 1 >= REQUEST_AUTH_RETRY_COUNT:
+                if auth_attempt + 1 >= auth_attempt_limit:
                     raise RequestError(
-                        f"image request failed after {REQUEST_AUTH_RETRY_COUNT} auth attempts: {exc}"
+                        f"image request failed after {auth_attempt_limit} auth attempts: {exc}"
                     ) from exc
             except RequestError as exc:
                 logger.warning(
                     "image request failed request_id={} auth_attempt={}/{} error={}",
                     request_id or conversation_id,
                     auth_attempt + 1,
-                    REQUEST_AUTH_RETRY_COUNT,
+                    auth_attempt_limit,
                     exc,
                 )
-                if auth_attempt + 1 >= REQUEST_AUTH_RETRY_COUNT:
+                if auth_attempt + 1 >= auth_attempt_limit:
                     raise RequestError(
-                        f"image request failed after {REQUEST_AUTH_RETRY_COUNT} auth attempts: {exc}"
+                        f"image request failed after {auth_attempt_limit} auth attempts: {exc}"
                     ) from exc
         else:
             raise RequestError("image request auth retry loop exhausted")
