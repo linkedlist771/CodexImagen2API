@@ -160,7 +160,7 @@ def build_request_payload(
                 "content": content,
             }
         ],
-        "tools": [{"type": "image_generation", "output_format": "png", "quality": "high", "background": "auto"}],
+        "tools": [{"type": "image_generation", "output_format": "png"}],
         "tool_choice": "required",
         "parallel_tool_calls": False,
         "reasoning": DEFAULT_REASONING,
@@ -251,52 +251,53 @@ async def send_request(
             request_id or "-",
         )
 
-        async with client.stream(
-            "POST", url, headers=headers, json=payload
-        ) as response:
-            if response.status_code == 401 and attempt == 0:
-                logger.warning(
-                    "responses request unauthorized request_id={} attempt={} action=refresh_access_token",
+        try:
+            async with client.stream("POST", url, headers=headers, json=payload) as response:
+                if response.status_code == 401 and attempt == 0:
+                    logger.warning(
+                        "responses request unauthorized request_id={} attempt={} action=refresh_access_token",
+                        request_id or "-",
+                        attempt + 1,
+                    )
+                    await refresh_access_token(client, auth, request_id=request_id)
+                    headers["Authorization"] = f"Bearer {auth['access_token']}"
+                    if auth.get("account_id"):
+                        headers["ChatGPT-Account-ID"] = auth["account_id"]
+                    continue
+
+                if response.status_code >= 400:
+                    body = (await response.aread()).decode("utf-8", "replace")
+                    logger.error(
+                        "responses request failed status={} request_id={} body={}",
+                        response.status_code,
+                        request_id or "-",
+                        body[:1000],
+                    )
+                    rate_limit_error = rate_limit_error_from_response(response.status_code, body)
+                    if rate_limit_error:
+                        raise rate_limit_error
+                    raise RequestError(
+                        f"responses request failed with HTTP {response.status_code}: {body[:1000]}"
+                    )
+
+                image_item, assistant_text = await parse_sse_stream(response)
+                if image_item is None:
+                    raise RequestError(
+                        "stream finished without an image_generation_call item; "
+                        f"assistant text was: {' '.join(assistant_text).strip()!r}"
+                    )
+
+                logger.debug(
+                    "responses stream complete request_id={} image_call_id={} output_status={} assistant_text_chars={}",
                     request_id or "-",
-                    attempt + 1,
-                )
-                await refresh_access_token(client, auth, request_id=request_id)
-                headers["Authorization"] = f"Bearer {auth['access_token']}"
-                if auth.get("account_id"):
-                    headers["ChatGPT-Account-ID"] = auth["account_id"]
-                continue
-
-            if response.status_code >= 400:
-                body = (await response.aread()).decode("utf-8", "replace")
-                logger.error(
-                    "responses request failed status={} request_id={} body={}",
-                    response.status_code,
-                    request_id or "-",
-                    body[:1000],
-                )
-                rate_limit_error = rate_limit_error_from_response(response.status_code, body)
-                if rate_limit_error:
-                    raise rate_limit_error
-                raise RequestError(
-                    f"responses request failed with HTTP {response.status_code}: {body[:1000]}"
+                    image_item.get("id"),
+                    image_item.get("status"),
+                    len("".join(assistant_text).strip()),
                 )
 
-            image_item, assistant_text = await parse_sse_stream(response)
-            if image_item is None:
-                raise RequestError(
-                    "stream finished without an image_generation_call item; "
-                    f"assistant text was: {' '.join(assistant_text).strip()!r}"
-                )
-
-            logger.debug(
-                "responses stream complete request_id={} image_call_id={} output_status={} assistant_text_chars={}",
-                request_id or "-",
-                image_item.get("id"),
-                image_item.get("status"),
-                len("".join(assistant_text).strip()),
-            )
-
-            return image_item, assistant_text
+                return image_item, assistant_text
+        except httpx.HTTPError as exc:
+            raise RequestError(f"responses request failed before receiving a response: {exc}") from exc
 
     raise RequestError("request retry loop exhausted")
 
